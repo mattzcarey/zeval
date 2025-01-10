@@ -1,33 +1,75 @@
-//! By convention, main.zig is where your main function lives in the case that
-//! you are building an executable. If you are making a library, the convention
-//! is to delete this file and start with root.zig instead.
 const std = @import("std");
+const bun = @import("bun.zig");
 
-pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
+const zevalAssert = struct {
+    pub fn callback(
+        ctx: ?*bun.JSContextRef,
+        function: ?*bun.JSObjectRef,
+        thisObject: ?*bun.JSObjectRef,
+        argumentCount: usize,
+        arguments: [*]const ?*bun.JSValueRef,
+        exception: ?*?*bun.JSValueRef,
+    ) callconv(.C) ?*bun.JSValueRef {
+        _ = exception; // autofix
+        _ = thisObject; // autofix
+        _ = function; // autofix
+        _ = argumentCount;
+        _ = arguments;
 
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
+        return bun.JSValueMakeBoolean(ctx, true);
+    }
+}.callback;
 
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
+export fn __jsx_register_bunjs(ctx: ?*bun.JSContextRef, namespace: ?*bun.JSObjectRef) void {
+    const func_name = bun.createString("zevalAssert");
+    defer bun.JSStringRelease(func_name);
 
-    try bw.flush(); // Don't forget to flush!
+    const func = bun.JSObjectMakeFunctionWithCallback(ctx, func_name, zevalAssert);
+
+    bun.JSObjectSetProperty(
+        ctx,
+        namespace,
+        func_name,
+        func,
+        0,
+        null,
+    );
 }
 
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
-}
+test "assert function can be created and called" {
+    const testing = std.testing;
 
-test "fuzz example" {
-    // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
-    const input_bytes = std.testing.fuzzInput(.{});
-    try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input_bytes));
+    // Create a fresh context
+    const ctx = bun.JSGlobalContextCreate(null);
+    defer bun.JSGlobalContextRelease(ctx);
+    try testing.expect(ctx != null);
+
+    // Create a global object to attach our function to
+    const global = bun.JSObjectMake(ctx, null, null);
+    try testing.expect(global != null);
+
+    // Create and register our assert function
+    const func_name = bun.createString("assert");
+    defer bun.JSStringRelease(func_name);
+
+    const func = bun.JSObjectMakeFunctionWithCallback(ctx, func_name, zevalAssert);
+    try testing.expect(func != null);
+
+    // Attach the function to the global object
+    bun.JSObjectSetProperty(
+        ctx,
+        global,
+        func_name,
+        func,
+        0,
+        null,
+    );
+
+    // Test that the function has the correct type
+    const type_of = bun.JSValueGetType(ctx, func);
+    try testing.expectEqual(type_of, bun.JSType.Object);
+
+    // Create a test value and verify it works
+    const test_value = bun.JSValueMakeBoolean(ctx, true);
+    try testing.expect(test_value != null);
 }
