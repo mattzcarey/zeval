@@ -1,2 +1,33 @@
-zig-out/
+# Bazel symlinks
+bazel-*
+
+# macOS
+.DS_Store
+
+# Local Checkouts
+/stablehlo/
+/llvm-project/
+/xla/
+
+# Just in case, Zig caches
 .zig-cache/
+zig-out/
+
+# Models
+*.safetensors
+*.pb
+*.trace.json
+*.pt
+*.bin
+
+# Data files
+*.wav
+*.ecdc
+.venv
+
+# Editor specific
+## Neovim
+.nvim.local.lua
+
+node_modules/
+dist/
