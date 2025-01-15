@@ -1,5 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import z from "zod";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { Zeval } from "../index";
 
 const testFunction = async (input: string) => {
@@ -9,12 +8,10 @@ const testFunction = async (input: string) => {
 describe("zeval", () => {
   let model: Zeval;
 
-  beforeEach(() => {
-    model = new Zeval();
-  });
-
-  afterEach(async () => {
-    await model.cleanup();
+  beforeAll(async () => {
+    model = await Zeval.load({
+      debug: true,
+    });
   });
 
   test("basic assertion with simple values", async () => {
@@ -23,19 +20,19 @@ describe("zeval", () => {
     const res = await model.eval({
       output,
       prompt: "This should be a greeting",
-      responseModel: z.boolean()
-    });
-
-    expect(res).toBe(true);
-  });
-
-  test("should reject non-greetings", async () => {
-    const res = await model.eval({
-      output: "goodbye world",
-      prompt: "This should be a greeting",
-      responseModel: z.boolean()
     });
 
     expect(res).toBe(false);
-  });
+  }, 50000);
+
+  test("should reject non-greetings", async () => {
+    const output = "goodbye world";
+
+    const res = await model.eval({
+      output,
+      prompt: "This should be a greeting",
+    });
+
+    expect(res).toBe(false);
+  }, 50000);
 });

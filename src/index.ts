@@ -1,130 +1,90 @@
-import { ChildProcess, spawn } from 'child_process';
-import { chmodSync, existsSync, mkdirSync } from 'fs';
-import { homedir } from 'os';
+import { spawn } from 'child_process';
 import { join } from 'path';
 import { z } from 'zod';
 
 type ZevalConfig = {
-  modelVersion?: string;
+  debug?: boolean;
 }
 
 export class Zeval {
-  private modelProcess: ChildProcess | null = null;
-  private readonly modelVersion: string;
-  private modelPath: string | null = null;
-  
-  constructor(config: ZevalConfig = {}) {
-    this.modelVersion = config.modelVersion ?? "latest";
+  private modelDir: string;
+
+  constructor(private config: ZevalConfig = {}) {
+    this.modelDir = join(process.cwd(), 'build');
   }
 
-  private getModelDir(): string {
-    const modelDir = join(homedir(), '.zeval', 'models');
-    if (!existsSync(modelDir)) {
-      mkdirSync(modelDir, { recursive: true });
-    }
-    return modelDir;
-  }
+  async generate(prompt: string): Promise<string> {
+    console.log("🦓 Running model from:", this.modelDir);
+    console.log("🦓 Prompt:", prompt);
 
-  private async downloadModel(): Promise<string> {
-    const platform = process.platform;
-    const arch = process.arch;
-    const modelDir = this.getModelDir();
-    const binaryName = `zeval-${platform}-${arch}`;
-    const modelPath = join(modelDir, binaryName);
-
-    // Return cached model if it exists
-    if (existsSync(modelPath)) {
-      return modelPath;
-    }
-
-    // Download from GitHub releases
-    const url = `https://github.com/mattzcarey/zeval/releases/download/${this.modelVersion}/${binaryName}`;
-    
-    const response = await fetch(url);
-    const buffer = await response.arrayBuffer();
-    await Bun.write(modelPath, buffer);
-
-    // Make binary executable
-    chmodSync(modelPath, '755');
-    
-    return modelPath;
-  }
-
-  private async ensureModelRunning(): Promise<void> {
-    if (this.modelProcess) return;
-
-    if (!this.modelPath) {
-      this.modelPath = await this.downloadModel();
-    }
-
-    this.modelProcess = spawn(this.modelPath, [], {
-      stdio: ['pipe', 'pipe', 'pipe']
+    const modelProcess = spawn(join(this.modelDir, 'bin', 'TinyLlama-Stories-15M'), [
+      `--model=${join(this.modelDir, 'model/stories15M.tinyllama')}`,
+      `--tokenizer=${join(this.modelDir, 'tokenizer/stories260K.tinyllama')}`,
+      `--prompt=${prompt}`
+    ], {
+      cwd: this.modelDir,
+      stdio: this.config.debug ? 'inherit' : ['pipe', 'pipe', 'pipe']
     });
-
-    // Handle process errors
-    this.modelProcess.on('error', (error) => {
-      console.error('Model process error:', error);
-      this.modelProcess = null;
-    });
-
-    this.modelProcess.on('exit', (code) => {
-      if (code !== 0) {
-        console.error(`Model process exited with code ${code}`);
-      }
-      this.modelProcess = null;
-    });
-  }
-
-  async generate(input: string): Promise<string> {
-    await this.ensureModelRunning();
-    
-    if (!this.modelProcess?.stdin || !this.modelProcess?.stdout) {
-      throw new Error('Model process not running');
-    }
 
     return new Promise((resolve, reject) => {
       let output = '';
+      let error = '';
 
-      this.modelProcess!.stdout!.on('data', (data) => {
-        output += data.toString();
+      modelProcess.stdout?.on('data', (data) => {
+        const str = data.toString();
+        output += str;
+        if (this.config.debug) console.log("🦓 Output:", str);
       });
 
-      this.modelProcess!.stdout!.on('end', () => {
-        resolve(output.trim());
+      modelProcess.stderr?.on('data', (data) => {
+        error += data.toString();
+        if (this.config.debug) console.error("🦓 Error:", data.toString());
       });
 
-      this.modelProcess!.stdin!.write(input + '\n');
+      modelProcess.on('error', (err) => {
+        console.error("🦓 Error:", err);
+        reject(err);
+      });
+      
+      modelProcess.on('close', (code) => {
+        console.log("🦓 Model exited with code:", code);
+        if (code === 0) {
+          resolve(output.trim());
+        } else {
+          reject(new Error(`Model exited with code ${code}\nError: ${error}`));
+        }
+      });
     });
   }
 
-  async eval<T>({ output, prompt, responseModel }: {
+  async generateFake(input: string): Promise<string> {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return "true";
+  }
+
+  async eval<T>({ output, prompt }: {
     output: string,
     prompt: string,
-    responseModel: z.ZodType<T>
-  }): Promise<T> {
+  }): Promise<boolean> {
     // Construct evaluation prompt
-    const evalPrompt = `
-Given this output: "${output}"
-And this requirement: "${prompt}"
-Respond with true if the output meets the requirement, false otherwise.
-Respond with only true or false.
-    `.trim();
+    const evalPrompt = `System: You reply with true or false.
+
+User: Given this output: "${output}". And this requirement: "${prompt}". Does the output meet the requirement? True or False.
+
+Assistant:`.trim();
 
     const result = await this.generate(evalPrompt);
+    console.log("🦓 Result:", result);
     
     try {
-      // Parse "true" or "false" string to boolean, then validate with zod
       const boolResult = result.toLowerCase().trim() === 'true';
-      return responseModel.parse(boolResult);
+      return z.boolean().parse(boolResult);
     } catch (error) {
       throw new Error(`Failed to parse model response: ${result}`);
     }
   }
 
-  async cleanup(): Promise<void> {
-    if (this.modelProcess) {
-      this.modelProcess.kill();
-      this.modelProcess = null;
-    }
+  static async load(config: ZevalConfig = {}): Promise<Zeval> {
+    return new Zeval(config);
   }
 }

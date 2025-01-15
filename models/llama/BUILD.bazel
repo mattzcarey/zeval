@@ -210,3 +210,19 @@ oci_push(
     remote_tags = ["latest"],
     repository = "index.docker.io/steeve/llama",
 )
+
+mtree_spec(
+    name = "tinyllama_mtree",
+    srcs = [":TinyLlama-1.1B-Chat"],
+)
+
+tar(
+    name = "tinyllama_archive",
+    srcs = [":TinyLlama-1.1B-Chat"],
+    args = [
+        "--options",
+        "zstd:compression-level=9",
+    ],
+    compress = "zstd",
+    mtree = ":tinyllama_mtree",
+)

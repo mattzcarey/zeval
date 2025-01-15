@@ -31,3 +31,5 @@ zig-out/
 
 node_modules/
 dist/
+build/
+.env
